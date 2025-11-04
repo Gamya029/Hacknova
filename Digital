@@ -1,0 +1,133 @@
+<!-- Save as frontend/digital-detox.html -->
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width,initial-scale=1" />
+<title>Social Detox • Digital Wellbeing</title>
+<style>
+:root{font-family:Inter, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial; color:#0f172a}
+*{box-sizing:border-box}
+body{margin:0;background:#f6f8fb;padding:20px}
+.container{max-width:980px;margin:0 auto}
+.card{background:#fff;padding:16px;border-radius:14px;box-shadow:0 8px 30px rgba(16,24,40,0.06);margin-bottom:14px}
+h1{margin:0 0 8px;font-size:20px}
+small{color:#475569}
+.row{display:flex;gap:12px;align-items:center}
+button{padding:8px 12px;border-radius:10px;border:1px solid #e6eef8;background:#fff;cursor:pointer}
+button.primary{background:#0b74ff;color:white;border:none}
+input[type=number]{width:120px;padding:8px;border-radius:8px;border:1px solid #e6eef8}
+.small{font-size:13px;color:#475569}
+.history{max-height:220px;overflow:auto;padding-top:8px}
+.session{padding:10px;border-radius:10px;border:1px solid #f1f5ff;margin-bottom:8px;background:#fbfdff}
+.badge{background:#eef2ff;padding:6px 10px;border-radius:999px;font-size:12px}
+.toast{position:fixed;right:18px;bottom:18px;background:#111827;color:#fff;padding:10px 14px;border-radius:10px;box-shadow:0 12px 34px rgba(2,6,23,0.35)}
+footer{font-size:12px;color:#64748b;text-align:center;margin-top:8px}
+</style>
+</head>
+<body>
+<div class="container">
+  <div class="card">
+    <h1>Social Detox • Digital Wellbeing</h1>
+    <small>Track your active screen time, get mindful reminders and build healthier tech habits.</small>
+  </div>
+
+  <div class="card" id="statusCard">
+    <div class="row">
+      <div>
+        <div class="small">Active now:</div>
+        <div id="activeNow"><strong>No</strong></div>
+      </div>
+      <div style="margin-left:20px">
+        <div class="small">Current session:</div>
+        <div id="currSession">—</div>
+      </div>
+      <div style="margin-left:auto;text-align:right">
+        <div class="small">Total today:</div>
+        <div id="todayTotal"><strong>0m</strong></div>
+      </div>
+    </div>
+
+    <div style="margin-top:12px" class="row">
+      <button id="toggleBtn" class="primary">Start Session</button>
+      <button id="remindBtn">Quick Reminder</button>
+      <button id="clearBtn" style="color:#ef4444;border-color:#fee2e2">Clear Data</button>
+      <div style="margin-left:auto" class="small">Notifications: <span id="notifPerm">unknown</span></div>
+    </div>
+  </div>
+
+  <div class="card">
+    <h3>Settings</h3>
+    <label>Daily limit (minutes)
+      <input id="dailyLimit" type="number" min="5" value="120" />
+    </label>
+    <label>Reminder interval (minutes)
+      <input id="reminderInterval" type="number" min="5" value="60" />
+    </label>
+    <label style="margin-top:8px">
+      <input id="enableReminders" type="checkbox" checked /> Enable reminders
+    </label>
+    <div class="small" style="margin-top:8px">Tip: Enable notifications to receive system-level reminders. Data is stored in your browser by default.</div>
+  </div>
+
+  <div class="card">
+    <h3>Last sessions (recent)</h3>
+    <div class="history" id="history"></div>
+  </div>
+
+  <div class="card">
+    <h3>Daily usage (7 days)</h3>
+    <canvas id="chart" width="700" height="120" style="width:100%;max-width:700px;height:120px"></canvas>
+    <div class="small" style="margin-top:8px">Bars show minutes per day.</div>
+  </div>
+
+  <footer>Made with ♥ — Social Detox Project</footer>
+</div>
+
+<div id="toastRoot"></div>
+
+<script>
+/* Core logic — activity detection, sessions, localStorage, reminders */
+const STORAGE_KEY = 'sd_sessions_v1';
+const SETTINGS_KEY = 'sd_settings_v1';
+function now(){return Date.now();}
+function saveSessions(s){localStorage.setItem(STORAGE_KEY, JSON.stringify(s));}
+function loadSessions(){try{return JSON.parse(localStorage.getItem(STORAGE_KEY)||'[]')}catch(e){return []}}
+function saveSettings(s){localStorage.setItem(SETTINGS_KEY, JSON.stringify(s));}
+function loadSettings(){try{return JSON.parse(localStorage.getItem(SETTINGS_KEY) || JSON.stringify({dailyLimitMinutes:120, reminderIntervalMinutes:60, detoxEnabled:true}))}catch(e){return {dailyLimitMinutes:120, reminderIntervalMinutes:60, detoxEnabled:true}}}
+function formatDurationMs(ms){const m=Math.round(ms/60000);const h=Math.floor(m/60);const mm=m%60;return h?${h}h ${mm}m:${mm}m}
+function fmtDate(ts){const d=new Date(ts);return d.toLocaleString()}
+
+let sessions = loadSessions();
+let settings = loadSettings();
+let currentStart = null;let isActive = false;let lastActivity = now();
+const idleThreshold = 60*1000;
+
+const activeNowEl=document.getElementById('activeNow');
+const currSessionEl=document.getElementById('currSession');
+const todayTotalEl=document.getElementById('todayTotal');
+const toggleBtn=document.getElementById('toggleBtn');
+const remindBtn=document.getElementById('remindBtn');
+const clearBtn=document.getElementById('clearBtn');
+const notifPermEl=document.getElementById('notifPerm');
+const dailyLimitInput=document.getElementById('dailyLimit');
+const reminderIntervalInput=document.getElementById('reminderInterval');
+const enableRemindersInput=document.getElementById('enableReminders');
+const historyEl=document.getElementById('history');
+const chartCanvas=document.getElementById('chart');
+const toastRoot=document.getElementById('toastRoot');
+
+dailyLimitInput.value=settings.dailyLimitMinutes;reminderIntervalInput.value=settings.reminderIntervalMinutes;enableRemindersInput.checked=settings.detoxEnabled;updateNotifStatus();
+
+function onActivity(){lastActivity=now();if(!isActive)startSession();}
+['mousemove','keydown','touchstart'].forEach(e=>window.addEventListener(e,onActivity));
+document.addEventListener('visibilitychange',()=>{if(document.hidden)stopSession();else onActivity();});
+setInterval(()=>{if(currentStart && (now()-lastActivity>idleThreshold))stopSession();},10000);
+
+let reminderTimer=null;
+function startReminderLoop(){if(reminderTimer)clearInterval(reminderTimer);if(!settings.detoxEnabled)return;const ms=Math.max(5,settings.reminderIntervalMinutes)*60000;reminderTimer=setInterval(()=>{runReminderCheck();},ms)}
+function runReminderCheck(){const totalToday=getTodayTotalMs();const totalMins=Math.round(totalToday/60000);if(totalMins>=settings.dailyLimitMinutes){notify('Daily limit reached',You've used ${totalMins} minutes today — consider a detox.);toast(Daily limit reached: ${totalMins}m);}else{notify('Mindful reminder',You've used ${totalMins} minutes today. Take a short break if needed.);toast(Reminder — used ${totalMins}m today);}}
+
+function updateNotifStatus(){notifPermEl.textContent=(('Notification' in window)?Notification.permission:'not supported');}
+function requestNotif(){if('Notification' in window && Notification.permission==='default'){Notification.requestPermission().then(()=>updateNotifStatus());}}
+function notify(title,body){try{if('Notification' in window){if(Notification.permission==='granted'){new Notification(title,{body});}els
